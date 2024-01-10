@@ -1,7 +1,15 @@
+const path = require("path")
 const Product = require("../models/Product");
-const ProductModel = require("../models/Product")
-const getAllProducts = async (req, res) => {
+const recordPerPage = require("../config/pagination");
+const { log } = require("util");
+const imageValidate = require("../utils/imageValidate");
+const { error } = require("console");
+const fs = require('fs')
+const { v4: uuidv4 } = require("uuid")
+const getAllProducts = async (req, res, next) => {
     try {
+
+        // Flittering 
         let query = {};
         let queryControl = false
 
@@ -16,9 +24,19 @@ const getAllProducts = async (req, res) => {
         let categoryName = req.params.categoryName || ""
         if (categoryName) {
             queryControl = true;
-            let properties = categoryName.replace(",", "/")
+            let properties = categoryName.replaceAll(",", "/")
             var regExp = new RegExp("^" + properties)
             categoryQueryControl = { category: regExp }
+        }
+
+        if (req.query.category) {
+            queryCondition = true;
+            let a = req.query.category.split(",").map((item) => {
+                if (item) return new RegExp("^" + item);
+            });
+            categoryQueryControl = {
+                category: { $in: a },
+            };
         }
 
         // Query by Rating
@@ -32,24 +50,34 @@ const getAllProducts = async (req, res) => {
 
         let attrsQueryCondition = []
         if (req.query.attrs) {
-            // attrs=RAM-1TB-2TB-4TB,color-blue-red
-            // [ 'RAM-1TB-4TB', 'color-blue', '' ]
             attrsQueryCondition = req.query.attrs.split(",").reduce((acc, item) => {
                 if (item) {
                     let a = item.split("-");
                     let values = [...a];
-                    values.shift(); // removes first item
+                    values.shift();
                     let a1 = {
                         attrs: { $elemMatch: { key: a[0], value: { $in: values } } },
                     };
                     acc.push(a1);
-                    // console.dir(acc, { depth: null })
-                    console.log(acc);
                     return acc;
                 } else return acc;
             }, []);
-            //   console.dir(attrsQueryCondition, { depth: null });
+
             queryCondition = true;
+        }
+
+        let searchQueryControl = {}
+        let searchQuery = req.params.searchQuery
+        let select = {}
+        if (searchQuery) {
+            queryControl = true
+            searchQueryControl = {
+                $text: { $search: '"' + searchQuery + '"' }
+            }
+
+            select = {
+                score: { $meta: "textScore" }
+            }
         }
 
         if (queryControl) {
@@ -57,44 +85,242 @@ const getAllProducts = async (req, res) => {
                 $and: [
                     priceQueryControl,
                     categoryQueryControl,
+                    searchQueryControl,
                     ratingQueryControl,
-                    attrsQueryCondition,
+                    ...attrsQueryCondition,
+
                 ]
             }
         }
-        const products = await ProductModel.find(query);
-        res.status(200).json(products)
+
+        const productTotalNumber = await Product.countDocuments({})
+
+        const pageNum = Number(req.query.pageNum) || 1;
+
+        let sort = {}
+        const sortOptions = req.query.sort || "";
+
+        if (sortOptions) {
+            let sortOpt = sortOptions.split("_");
+            sort = { [sortOpt[0]]: Number(sortOpt[1]) }
+        }
+        const products = await Product.find(query).skip(recordPerPage * (pageNum - 1)).sort(sort).limit(recordPerPage).select(select)
+
+        res.status(200).json({ products, pageNum, paginationLinksNumber: Math.ceil(productTotalNumber / recordPerPage) });
     } catch (error) {
-        res.status(500).json(error.message)
+        next(error)
     }
 }
 
-const createProduct = async (req, res) => {
+
+const createProduct = async (req, res, next) => {
     try {
-        const productData = {};
-        Object.keys(req.body).forEach((key) => {
-            productData[key] = req.body[key];
-        });
+        const {
+            name, description, category, count, price, discount, attributeTable
+        } = req.body;
+        const product = new Product()
 
-        const newProduct = new Product(productData);
+        product.name = name
+        product.description = description
+        product.category = category
+        product.count = count
+        product.price = price
+        product.discount = discount
 
-        await newProduct.save();
-        res.status(201).json({ message: 'successfully created product', newProduct })
+        if (attributeTable.length > 0) {
+            attributeTable.map((item) => {
+                product.attrs.push(item)
+            })
+        }
+        await product.save()
+
+        res.status(201).json({ message: 'Successfully created product' });
     } catch (error) {
-        console.log(error.message)
-        res.status(500).send('external server error')
+        next(error)
     }
+};
 
-}
 
 const getDiscountProducts = async (req, res) => {
     try {
         const discountProducts = await Product.find({ discount })
         res.status(200).json(discountProducts)
     } catch (error) {
-        res.status(500).json({ message: error.message });
+        next(error)
     }
 
 }
 
-module.exports = { getAllProducts, createProduct, getDiscountProducts }
+const getProductsById = async (req, res, next) => {
+    try {
+        const { id } = req.params;
+        const productWithThatIdExist = await Product.findById(id);
+
+        if (productWithThatIdExist) {
+            res.status(200).json({
+                message: productWithThatIdExist
+            })
+        } else {
+            res.status(400).json({
+                message: "There was an error, check Id"
+            })
+            throw Error()
+        }
+    } catch (error) {
+        next(error)
+    }
+
+}
+
+const getBestSellers = async (req, res, next) => {
+    try {
+        const products = await Product.aggregate([
+            { $sort: { category: 1, sales: -1 } },
+            { $group: { _id: "$category", doc_with_max_sales: { $first: "$$ROOT" } } },
+            { $replaceWith: "$doc_with_max_sales" },
+            { $match: { sale: { $gt: 0 } } },
+            { $project: { _id: 1, name: 1, images: 1, category: 1, description: 1 } },
+            { $limit: 3 }
+        ])
+
+        res.json(products)
+    } catch (error) {
+        next(error)
+    }
+}
+
+const getProductForAdmin = async (req, res, next) => {
+    try {
+        const products = await Product.find({}).sort({ category: 1 }).select("name price category")
+
+        return res.json(products)
+    } catch (error) {
+        next(error)
+    }
+}
+
+const deleteProductByAdmin = async (req, res, next) => {
+    try {
+        const { id } = req.params;
+        const productExist = await Product.findById(id)
+
+        if (productExist) {
+            await Product.findByIdAndDelete(id)
+            res.json({
+                message: "Delete Products"
+            })
+        }
+        res.json({ message: 'Unknown Product' })
+
+    } catch (error) {
+        next(error)
+    }
+}
+
+
+const updateProduct = async (req, res, next) => {
+    try {
+        const { id } = req.params
+        const {
+            name, description, category, count, price, discount, attributeTable
+        } = req.body;
+
+        const productExist = await Product.findById(id)
+
+        if (productExist) {
+            productExist.name = name || productExist.name
+            productExist.description = description || productExist.description
+            productExist.category = category || productExist.category
+            productExist.count = count || productExist.count
+            productExist.price = price || productExist.price
+            productExist.discount = discount || productExist.discount
+
+            if (attributeTable.length > 0) {
+                productExist.attrs = []
+                attributeTable.map((item) => {
+                    productExist.attrs.push(item)
+                })
+            }
+
+            await productExist.save()
+            res.status(201).json({ message: "updated products" })
+        } else {
+            res.status(404).json({ message: 'Unknown Product' })
+        }
+    } catch (error) {
+        next(error)
+    }
+}
+
+const uploadImage = async (req, res, next) => {
+    let imageTable = []
+    try {
+        if (!req.files || !!req.files.images == false) {
+            res.status(400).json({ message: "No file was found" })
+        }
+
+        const validateImage = imageValidate(req.files.images)
+
+
+
+        if (validateImage.error) {
+            res.status(400).send(validateImage, error)
+        }
+
+        if (Array.isArray(req.files.images)) {
+            imageTable = req.files.images;
+
+        } else {
+            imageTable.push(req.files.images)
+        }
+        const uploadDictionary = path.resolve(__dirname, "../../client", "public", "products", "images")
+
+        const productId = await Product.findById(req.params.productId)
+
+        for (let img of imageTable) {
+            const fileName = uuidv4() + path.extname(img.name)
+            const uploadPath = uploadDictionary + "/" + fileName
+            productId.images.push({ path: "/products/images/" + fileName })
+
+            img.mv(uploadPath, (err) => {
+                if (err) {
+                    res.status(500).send(err.message)
+                }
+            })
+        }
+
+        await productId.save()
+        res.status(201).send("file uploaded successfully")
+
+    } catch (error) {
+        next(error)
+    }
+}
+
+const deleteProductImage = async (req, res, next) => {
+    try {
+        const imagePath = decodeURIComponent(req.params.imagePath)
+        const finalPath = path.resolve("../client/public") + imagePath
+        console.log(finalPath);
+        fs.unlink(finalPath, (err) => {
+            if (err) {
+                res.status(500).send(err.message)
+            }
+        })
+
+
+        await Product.findOneAndUpdate(
+            { _id: req.params.productId },
+            { $pull: { images: { path: imagePath } } }
+        ).orFail();
+        return res.end();
+    } catch (error) {
+        next(error)
+    }
+
+}
+
+
+module.exports = { getAllProducts, createProduct, getDiscountProducts, getProductsById, getBestSellers, getProductForAdmin, deleteProductByAdmin, updateProduct, uploadImage, deleteProductImage }
+
+// '' 

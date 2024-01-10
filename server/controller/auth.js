@@ -16,11 +16,22 @@ async function CreateUser(req, res) {
         }
         const hashPassword = await bcrypt.hash(password, 10)
         const newUser = new User({
-            email, password: hashPassword, name
+            email: email.toLower(), password: hashPassword, name
         })
         await newUser.save()
 
-        res.status(201).json(newUser)
+        const token = jwt.sign({
+            _id: newUser._id,
+            email: newUser.email
+        }, process.env.JWT_KEY, { expiresIn: "1hr" })
+
+        res.cookies("access_token", token).status(201).json({
+            message: "register user successful",
+            createdUser: {
+                _id: newUser._id,
+                name: newUser.name,
+            }
+        })
     } catch (error) {
         console.log(error);
     }

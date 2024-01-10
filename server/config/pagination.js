@@ -1,3 +1,3 @@
-const recordPerPage = 9;
+const recordPerPage = 6;
 
 module.exports = recordPerPage
