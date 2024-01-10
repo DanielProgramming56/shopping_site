@@ -22,7 +22,6 @@ const UserSchema = mongoose.Schema({
     state: String,
     isAdmin: {
         type: Boolean,
-        required: true,
         default: false
     }
 }, { timestamps: true });
