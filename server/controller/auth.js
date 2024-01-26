@@ -7,7 +7,7 @@ const jwt = require("jsonwebtoken")
 
 async function CreateUser(req, res) {
     try {
-        const { email, password, name, isAdmin } = req.body;
+        const { email, password, name, isAdmin, phoneNumber } = req.body;
         const userExist = await User.findOne({ email })
 
         if (userExist) {
@@ -15,13 +15,13 @@ async function CreateUser(req, res) {
             return;
         }
         const hashPassword = await bcrypt.hash(password, 10)
-        const newUser = await User.create({ email: email, password: hashPassword, name, isAdmin })
-
+        const newUser = await User.create({ email: email, password: hashPassword, name, isAdmin, phoneNumber })
         const token = jwt.sign({
             _id: newUser._id,
             email: newUser.email,
             isAdmin: newUser.isAdmin,
             name: newUser.name,
+            phoneNumber: phoneNumber
         }, process.env.JWT_KEY, { expiresIn: "1hr" })
 
         res.cookie("access_token", token, {
@@ -67,7 +67,7 @@ const Login = async (req, res) => {
             cookiesParams = { ...cookiesParams, maxAge: 1000 * 60 * 60 * 60 * 24 * 7 }
         }
 
-        const token = jwt.sign({ id: user._id, email: user.email }, process.env.JWT_KEY, { expiresIn: "1hr" });
+        const token = jwt.sign({ id: user._id, email: user.email, name: user.name, isAdmin: user.isAdmin }, process.env.JWT_KEY, { expiresIn: "1hr" });
 
         res.cookie("access_token", token, cookiesParams).status(200).json({
             message: "success user login", userLoggedIn: {

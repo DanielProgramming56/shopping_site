@@ -9,12 +9,12 @@ const ReviewSchema = mongoose.Schema({
         type: Number,
         required: true
     },
-    User: {
-        _id: mongoose.Schema.ObjectId,
-        name: String,
+    user: {
+        _id: { type: mongoose.Schema.Types.ObjectId, required: true },
+        name: { type: String, required: true }
     }
 }, { timestamps: true })
 
-const Reviews = mongoose.model('Review', ReviewSchema);
+const Review = mongoose.model('Review', ReviewSchema);
 
-module.exports = Reviews
+module.exports = Review

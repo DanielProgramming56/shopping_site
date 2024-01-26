@@ -1,5 +1,5 @@
 const mongoose = require("mongoose");
-const Reviews = require("./Review")
+const Review = require("./Review")
 const ImageSchema = mongoose.Schema({
     path: { type: String, required: true, default: "/images/products/" },
 })
@@ -49,7 +49,7 @@ const ProductSchema = mongoose.Schema({
     reviews: [
         {
             type: mongoose.Schema.ObjectId,
-            ref: Reviews
+            ref: Review
         }
     ]
 }, {
